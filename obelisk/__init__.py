@@ -1,0 +1,2 @@
+"""Independent Obelisk fight module."""
+

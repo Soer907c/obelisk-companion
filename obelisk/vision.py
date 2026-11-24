@@ -1,0 +1,107 @@
+"""Local image recognition; no screen contents are sent to a service."""
+from pathlib import Path
+import re
+import cv2
+import numpy as np
+from PIL import Image
+from rapidocr_onnxruntime import RapidOCR
+from .model import Observation, number, timer
+
+TEMPLATES = Path(__file__).resolve().parents[1] / 'assets' / 'obelisk'
+
+def normalize(image):
+    pixels = np.asarray(image.convert('RGB'))
+    mask = np.max(np.abs(pixels.astype(np.int16) - [107, 81, 82]), axis=2) <= 15
+    rows = np.flatnonzero(mask.sum(axis=1) > pixels.shape[1] * .55)
+    if len(rows) < 10:
+        raise ValueError('The game viewport could not be recognized')
+    columns = np.flatnonzero(mask[int(np.argmax(mask.sum(axis=1)))])
+    runs = np.split(columns, np.flatnonzero(np.diff(columns) > 1) + 1)
+    columns = max(runs, key=len)
+    left, right = int(columns[0]), int(columns[-1]) + 1
+    bottom = int(rows[-1]) + 1
+    top = bottom - round((right-left) / 1.5)
+    if top < 0 or not 1.46 < (right-left)/(bottom-top) < 1.54:
+        raise ValueError('The game viewport does not match the expected 3:2 layout')
+    rect = (left, top, right, bottom)
+    return np.array(image.crop(rect).resize((1200, 800), Image.Resampling.LANCZOS).convert('RGB')), rect
+
+class Vision:
+    def __init__(self):
+        self.ocr = RapidOCR()
+        self.templates = {}
+        for name in ('shortcut', 'fight', 'exit', 'attack', 'return', 'menu'):
+            self.templates[name] = np.asarray(Image.open(TEMPLATES / (name + '.png')).convert('L'))
+
+    def match(self, gray, name, region):
+        x1, y1, x2, y2 = region
+        template = self.templates[name]
+        search = gray[y1:y2, x1:x2]
+        if min(search.shape) < min(template.shape):
+            return None
+        result = cv2.matchTemplate(search, template, cv2.TM_CCOEFF_NORMED)
+        _, score, _, pos = cv2.minMaxLoc(result)
+        if score < .78:
+            return None
+        return (x1 + pos[0] + template.shape[1]//2,
+                y1 + pos[1] + template.shape[0]//2)
+
+    def read_lines(self, frame, boxes, source=None, viewport=None):
+        crops = []
+        for x1, y1, x2, y2 in boxes.values():
+            if source is not None:
+                l, t, r, b = viewport
+                crop = np.array(source.crop((round(l+x1*(r-l)/1200), round(t+y1*(b-t)/800),
+                                             round(l+x2*(r-l)/1200), round(t+y2*(b-t)/800))).convert('RGB'))
+            else:
+                crop = frame[y1:y2, x1:x2]
+            # White text on dark panels; nearest-neighbour scaling preserves pixel glyphs.
+            rgb = cv2.resize(crop, None, fx=2, fy=2, interpolation=cv2.INTER_NEAREST)
+            crops.append(cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR))
+        # Small timers lose glyph detail if padded to a long HP line in one batch.
+        results = [self.ocr.text_recognizer([crop])[0][0] for crop in crops]
+        return {name: text.strip() if score >= .60 else ''
+                for name, (text, score) in zip(boxes, results)}
+
+    def observe(self, image):
+        frame, rect = normalize(image)
+        gray = cv2.cvtColor(frame, cv2.COLOR_RGB2GRAY)
+        obs = Observation(viewport=rect)
+        regions = {'shortcut': (495, 220, 545, 270), 'exit': (495, 220, 545, 270),
+                   'fight': (285, 122, 375, 151), 'menu': (760, 145, 910, 180),
+                   'attack': (790, 525, 950, 580), 'return': (790, 525, 950, 580)}
+        obs.targets = {name: point for name, region in regions.items()
+                       if (point := self.match(gray, name, region)) is not None}
+        if 'menu' in obs.targets and 'return' in obs.targets:
+            obs.scene = 'return'
+        elif 'menu' in obs.targets and 'attack' in obs.targets:
+            obs.scene = 'menu'
+            obs.raw = self.read_lines(frame, {
+                'cooldown': (859, 561, 899, 579),
+                'hp': (810, 215, 974, 234),
+                'level': (810, 184, 896, 201),
+            })
+            obs.seconds = timer(obs.raw['cooldown'])
+            hp_text = re.sub(r'^\s*[Hh][Pp]\s*[:.]?\s*', '', obs.raw['hp'])
+            obs.hp = number(hp_text.split('/')[0])
+            level = re.search(r'Obelisk\s*[:.]?\s*(\d+)', obs.raw['level'], re.I)
+            obs.level = int(level[1]) if level else None
+        elif 'fight' in obs.targets and 'exit' in obs.targets:
+            obs.scene = 'fight'
+            obs.targets['hold'] = (270, 380)
+            obs.raw = self.read_lines(frame, {
+                'total': (118, 91, 220, 110),
+                'dps': (354, 91, 451, 109),
+                'timer': (318, 149, 359, 169),
+                'hp': (255, 189, 321, 210),
+            }, image, rect)
+            # In a timer-only crop these are common OCR variants of the zero glyph.
+            timer_text = obs.raw['timer'].translate(str.maketrans({'O': '0', 'o': '0', 'D': '0'}))
+            obs.seconds = timer(timer_text)
+            obs.total = number(obs.raw['total'])
+            obs.dps = number(obs.raw['dps'])
+            obs.hp = number(obs.raw['hp'])
+        elif 'shortcut' in obs.targets:
+            obs.scene = 'navigation'
+        return obs, Image.fromarray(frame)
+

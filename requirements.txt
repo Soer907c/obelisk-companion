@@ -1,0 +1,4 @@
+customtkinter==6.0.0
+rapidocr_onnxruntime==1.2.3
+Pillow>=12
+
