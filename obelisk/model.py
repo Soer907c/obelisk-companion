@@ -51,6 +51,7 @@ class Observation:
     targets: dict = field(default_factory=dict)
     raw: dict = field(default_factory=dict)
     viewport: tuple = ()
+    shortcut_motif: int | None = None
 
 @dataclass
 class Settings:

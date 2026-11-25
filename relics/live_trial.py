@@ -6,7 +6,7 @@ import os
 from pathlib import Path
 from time import monotonic, sleep
 
-from core.windows import Desktop, Input, InputUnion, MouseInput, W, user32, wait_for_game_focus
+from core.windows import Desktop, W, move_cursor, user32, wait_for_game_focus
 from core.storage import RUNTIME
 from obelisk.vision import normalize
 from relics.replay import DispatchState, RerollReplay
@@ -72,18 +72,7 @@ class TrialClicks:
         if self.stopped() or self.desktop.abort.is_set() or not self.desktop.foreground():
             raise RuntimeError('The trial stopped before click dispatch.')
         x, y = self.desktop.point(POSITIONS[action], self.viewport)
-        ctypes.set_last_error(0)
-        if not user32.SetCursorPos(x, y):
-            cursor_error = ctypes.get_last_error()
-            left, top, width, height = (user32.GetSystemMetrics(index) for index in (76, 77, 78, 79))
-            move = MouseInput((x-left)*65536//width + 65536//(2*width),
-                              (y-top)*65536//height + 65536//(2*height), 0, 0xC001, 0, 0)
-            event = Input(type=0, u=InputUnion(mi=move))
-            if user32.SendInput(1, ctypes.byref(event), ctypes.sizeof(event)) != 1:
-                raise RuntimeError(f'Windows rejected movement to {(x, y)}. '
-                                   f'SetCursorPos error {cursor_error}, SendInput error {ctypes.get_last_error()}.')
-        else:
-            cursor_error = 0
+        cursor_error = move_cursor(x, y) or 0
         sleep(.12)
         if self.stopped() or not self.desktop.foreground():
             raise RuntimeError('The trial stopped before mouse down.')

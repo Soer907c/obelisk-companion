@@ -87,6 +87,7 @@ class Runner:
             scene_started = started
             last_log = 0
             ready_frames = 0
+            menu_requested = None
             while not self.cancel.is_set():
                 now = time.monotonic()
                 if now-started >= settings.hours*3600:
@@ -147,6 +148,12 @@ class Runner:
                     self.events.put(('status', ('OBSERVING', 'Reading the game. No clicks are being sent.')))
                     self.cancel.wait(.7)
                     continue
+                if menu_requested is not None:
+                    if obs.scene == 'menu':
+                        menu_requested = None
+                    elif (obs.scene not in ('navigation', 'unknown')
+                          or now-menu_requested > settings.unknown_seconds):
+                        raise RuntimeError('The Obelisk menu was not confirmed after clicking the shortcut.')
                 if obs.scene == 'unknown':
                     self.desktop.release()
                     unknown_since = unknown_since or now
@@ -205,6 +212,9 @@ class Runner:
                         self.events.put(('status', ('NAVIGATING', 'Opening the Obelisk menu.')))
                         if now-last_action > 1:
                             self.desktop.click(obs.targets['shortcut'], obs.viewport)
+                            if menu_requested is None:
+                                menu_requested = now
+                            ready_frames = 0
                             last_action = now
                             retries += 1
                     elif obs.scene == 'menu':

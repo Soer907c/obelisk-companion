@@ -27,7 +27,7 @@ After setup, double-click **Start Obelisk.cmd** to launch. To create a shortcut 
 
 Open Idle Obelisk Miner in the desktop landscape layout. Select a feature in Companion. Press **F8** while Companion has focus to start the selected feature, or use its Start button. While a run is active, **F8** or **Stop** stops it. Companion brings the game forward and stops automation if the game loses focus. It opens in the idle state.
 
-- **Obelisk fights.** Use **Check screen recognition** to verify the game view. Set the fight and time limits, choose whether to stop when the obelisk falls, and start with a supervised one-fight session. A limit of `0` disables that limit.
+- **Obelisk fights.** Use **Check screen recognition** to verify the game view. Companion recognizes all 15 Obelisk menu shortcut icons without a level setting. After clicking the shortcut, it waits for a fresh view of the menu and its Fight button before continuing. Set the fight and time limits, choose whether to stop when the obelisk falls, and start with a supervised one-fight session. A limit of `0` disables that limit.
 - **Relic rerolls.** Open the relic result in the game and use **Read current result** to check recognition without clicking in the game. Set the divine minimums and gem budget, then use **Start auto-reroll**. A minimum of `0` ignores that divine. All selected minimums must be met in the same result. Each reroll costs **200 gems**. A **gem budget of 0 means no spending limit**. With this setting, automation can continue until the targets are met, the in-game balance is too low, or the session is stopped. An unreadable required count or an uncertain purchase stops the run.
 
 The relic calculator uses the chest counts, divine minimums and cap you enter. With 5.1 million relic chests, three divine chests, a Supernova target of 15 and a cap of 38, the first estimate appeared in about one second on the development PC. Budget-only edits reuse the per-roll odds.
@@ -39,4 +39,4 @@ The relic calculator uses the chest counts, divine minimums and cap you enter. W
 .\.venv\Scripts\python.exe tools/check_vision.py
 ```
 
-The tests cover fight transitions and cooldown, relic odds, screen recognition, and purchase guards with fake input. They require no game session. The repository includes the game UI crops needed for recognition and minimized test fixtures. Companion is an independent project for Idle Obelisk Miner.
+The tests cover fight transitions and cooldown, relic odds, screen recognition, and purchase guards with fake input. They require no game session. Shortcut coverage includes all 15 motifs at two window sizes and rejects an isolated sprite and the fight exit icon. A supervised live check opened the Obelisk menu with one shortcut click and verified the Fight button without starting a fight. The repository includes the game UI crops needed for recognition and minimized test fixtures. Companion is an independent project for Idle Obelisk Miner.

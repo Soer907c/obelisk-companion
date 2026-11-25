@@ -123,6 +123,23 @@ class Input(ctypes.Structure):
     _anonymous_ = ('u',)
     _fields_ = [('type', W.DWORD), ('u', InputUnion)]
 
+
+def move_cursor(x, y):
+    """Move to physical pixels. Return the SetCursorPos error on fallback."""
+    ctypes.set_last_error(0)
+    if user32.SetCursorPos(x, y):
+        return None
+    cursor_error = ctypes.get_last_error()
+    left, top, width, height = (user32.GetSystemMetrics(index) for index in (76, 77, 78, 79))
+    move = MouseInput((x-left)*65536//width + 65536//(2*width),
+                      (y-top)*65536//height + 65536//(2*height), 0, 0xC001, 0, 0)
+    event = Input(type=0, u=InputUnion(mi=move))
+    if user32.SendInput(1, ctypes.byref(event), ctypes.sizeof(event)) != 1:
+        raise RuntimeError(f'Windows rejected movement to {(x, y)}. '
+                           f'SetCursorPos error {cursor_error}, SendInput error {ctypes.get_last_error()}.')
+    return cursor_error
+
+
 class Desktop:
     def __init__(self):
         self.hwnd = None
@@ -197,7 +214,13 @@ class Desktop:
             if self.held:
                 return
             x, y = self.point(position, viewport)
-            user32.SetCursorPos(x, y)
+            if move_cursor(x, y) is not None:
+                time.sleep(.12)
+            cursor = W.POINT()
+            if not user32.GetCursorPos(ctypes.byref(cursor)) or (cursor.x, cursor.y) != (x, y):
+                raise RuntimeError('Mouse input stopped because Windows did not reach the recognized target.')
+            if self.point(position, viewport) != (x, y) or self.abort.is_set():
+                return
             self._event(0x0002)
             self.held = True
 

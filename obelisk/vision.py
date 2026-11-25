@@ -1,4 +1,6 @@
 """Local image recognition; no screen contents are sent to a service."""
+from base64 import b64decode
+from io import BytesIO
 from pathlib import Path
 import re
 import cv2
@@ -8,6 +10,35 @@ from rapidocr_onnxruntime import RapidOCR
 from .model import Observation, number, timer
 
 TEMPLATES = Path(__file__).resolve().parents[1] / 'assets' / 'obelisk'
+SHORTCUT_REGION = (495, 220, 545, 270)
+SHORTCUT_SIZES = ((26, 32), (26, 34), (27, 33), (28, 32), (28, 34))
+SHORTCUT_SCORE = .70
+
+
+def load_shortcut_icons():
+    """Read the 15 gallery sprites in motif order, retaining their alpha masks."""
+    lines = (TEMPLATES / 'shortcut-icons.b64').read_bytes().splitlines()
+    if len(lines) != 15:
+        raise ValueError('Expected 15 Obelisk shortcut motifs')
+    icons = []
+    for line in lines:
+        with Image.open(BytesIO(b64decode(line, validate=True))) as icon:
+            icons.append(icon.convert('RGBA'))
+    if len({icon.tobytes() for icon in icons}) != len(icons):
+        raise ValueError('Duplicate Obelisk shortcut motif')
+    return icons
+
+
+def has_shortcut_button(search, x, y):
+    """Require the red sides of the game button around the matched sprite."""
+    if x < 15 or x + 15 >= search.shape[1] or y < 6 or y + 7 > search.shape[0]:
+        return False
+    for rail in (search[y-6:y+7, x-15:x-12], search[y-6:y+7, x+12:x+15]):
+        red, green, blue = rail.astype(np.int16).transpose(2, 0, 1)
+        if np.count_nonzero((red >= 70) & (red - np.maximum(green, blue) >= 35)) < 12:
+            return False
+    return True
+
 
 def normalize(image):
     pixels = np.asarray(image.convert('RGB'))
@@ -33,6 +64,32 @@ class Vision:
         for name in ('shortcut', 'fight', 'exit', 'attack', 'return', 'menu'):
             self.templates[name] = np.asarray(Image.open(TEMPLATES / (name + '.png')).convert('L'))
         self.templates['shortcut-cooldown'] = np.asarray(Image.open(TEMPLATES / 'shortcut-cooldown.pgm'))
+        self.shortcut_icons = []
+        for motif, icon in enumerate(load_shortcut_icons(), 1):
+            for size in SHORTCUT_SIZES:
+                rgba = np.asarray(icon.resize(size, Image.Resampling.LANCZOS))
+                pixels = np.ascontiguousarray(rgba[:, :, :3])
+                mask = (rgba[:, :, 3] >= 225).astype(np.uint8)
+                self.shortcut_icons.append((motif, pixels, mask))
+
+    def match_shortcut(self, frame):
+        x1, y1, x2, y2 = SHORTCUT_REGION
+        search = frame[y1:y2, x1:x2]
+        matches = []
+        for motif, pixels, mask in self.shortcut_icons:
+            scores = cv2.matchTemplate(search, pixels, cv2.TM_CCOEFF_NORMED, mask=mask)
+            scores[~np.isfinite(scores)] = -1
+            _, score, _, (left, top) = cv2.minMaxLoc(scores)
+            h, w = mask.shape
+            x, y = left + w // 2, top + h // 2
+            if score >= SHORTCUT_SCORE and has_shortcut_button(search, x, y):
+                matches.append((score, motif, x, y))
+        if not matches:
+            return None
+        _, motif, x, y = max(matches)
+        if any(abs(mx-x) > 3 or abs(my-y) > 3 for _, _, mx, my in matches):
+            return None, None
+        return (x1+x, y1+y), motif
 
     def match(self, gray, name, region):
         x1, y1, x2, y2 = region
@@ -68,15 +125,25 @@ class Vision:
         frame, rect = normalize(image)
         gray = cv2.cvtColor(frame, cv2.COLOR_RGB2GRAY)
         obs = Observation(viewport=rect)
-        regions = {'shortcut': (495, 220, 545, 270), 'exit': (495, 220, 545, 270),
+        regions = {'exit': SHORTCUT_REGION,
                    'fight': (285, 122, 375, 151), 'menu': (760, 145, 910, 180),
                    'attack': (790, 525, 950, 580), 'return': (790, 525, 950, 580)}
         obs.targets = {name: point for name, region in regions.items()
                        if (point := self.match(gray, name, region)) is not None}
-        if 'shortcut' not in obs.targets:
-            shortcut = self.match(gray, 'shortcut-cooldown', regions['shortcut'])
-            if shortcut is not None:
-                obs.targets['shortcut'] = shortcut
+        if 'exit' not in obs.targets:
+            icon = self.match_shortcut(frame)
+            if icon is not None:
+                point, obs.shortcut_motif = icon
+                if point is not None:
+                    obs.targets['shortcut'] = point
+            else:
+                for reference in ('shortcut', 'shortcut-cooldown'):
+                    point = self.match(gray, reference, SHORTCUT_REGION)
+                    x1, y1, x2, y2 = SHORTCUT_REGION
+                    if point is not None and has_shortcut_button(
+                            frame[y1:y2, x1:x2], point[0]-x1, point[1]-y1):
+                        obs.targets['shortcut'] = point
+                        break
         if 'menu' in obs.targets and 'return' in obs.targets:
             obs.scene = 'return'
         elif 'menu' in obs.targets and 'attack' in obs.targets:

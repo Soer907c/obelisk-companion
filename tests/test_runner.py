@@ -8,6 +8,7 @@ from pathlib import Path
 from unittest.mock import patch
 import bootstrap
 from PIL import Image
+from core.windows import Desktop
 from obelisk.model import Observation, Settings
 from obelisk.runner import Runner
 
@@ -41,6 +42,17 @@ def screen(scene, **kwargs):
     return Observation(scene=scene, targets={key: key for key in ('shortcut', 'attack', 'exit', 'return', 'hold')}, **kwargs)
 
 class FightWorkflow(unittest.TestCase):
+    def test_desktop_sends_no_mouse_down_if_cursor_is_off_target(self):
+        desktop = Desktop()
+        with patch.object(desktop, 'point', return_value=(80, 90)), \
+             patch.object(desktop, '_event') as event, \
+             patch('core.windows.move_cursor', return_value=None), \
+             patch('core.windows.user32.GetCursorPos', return_value=True):
+            with self.assertRaisesRegex(RuntimeError, 'recognized target'):
+                desktop.hold((10, 20), (0, 0, 100, 100))
+        event.assert_not_called()
+        self.assertFalse(desktop.held)
+
     def run_scenario(self, observations, settings):
         runner = Runner(queue.Queue())
         runner.desktop = FakeDesktop()
@@ -89,6 +101,12 @@ class FightWorkflow(unittest.TestCase):
         runner = self.run_scenario([screen('unknown')], Settings())
         self.assertEqual(runner.desktop.actions, [])
         self.assertIn('unrecognized', runner.stop_reason)
+
+    def test_shortcut_requires_a_fresh_menu_before_fight_input(self):
+        runner = self.run_scenario([screen('navigation'), screen('unknown'),
+                                    screen('fight', seconds=25)], Settings())
+        self.assertEqual(runner.desktop.actions, ['shortcut'])
+        self.assertIn('menu was not confirmed', runner.stop_reason)
 
     def test_missing_cooldown_never_starts(self):
         runner = self.run_scenario([screen('menu', level=70)], Settings())
