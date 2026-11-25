@@ -72,6 +72,18 @@ class FightWorkflow(unittest.TestCase):
         self.assertEqual([a for a in runner.desktop.actions if a != 'hold'],
                          ['shortcut', 'attack', 'exit', 'return', 'shortcut'])
 
+    def test_second_fight_after_return_and_cooldown(self):
+        cycle = [screen('menu', seconds=0, level=70)] * 2 + [
+            screen('fight', seconds=2, total=Decimal(1)),
+            screen('fight', seconds=0, total=Decimal(10)),
+            screen('fight', seconds=0, total=Decimal(10)),
+            screen('return'), screen('navigation'),
+            screen('menu', seconds=35, level=70)]
+        runner = self.run_scenario(cycle * 2, Settings(max_attempts=2))
+        self.assertEqual(runner.stop_reason, 'Fight limit reached')
+        self.assertEqual(runner.stats.attempts, 2)
+        self.assertEqual(runner.desktop.actions.count('attack'), 2)
+
     def test_unknown_screen_never_clicks(self):
         runner = self.run_scenario([screen('unknown')], Settings())
         self.assertEqual(runner.desktop.actions, [])
@@ -91,4 +103,3 @@ class FightWorkflow(unittest.TestCase):
                                     screen('menu', seconds=0, level=71)], Settings())
         self.assertEqual(runner.desktop.actions, [])
         self.assertIn('Obelisk defeated', runner.stop_reason)
-

@@ -19,6 +19,17 @@ class ScreenRecognition(unittest.TestCase):
                 obs, _ = self.vision.observe(Image.open(FIXTURES / (filename+'.png')))
                 self.assertEqual(obs.scene, scene)
 
+    def test_post_fight_cooldown_shortcut(self):
+        # Reconstruct just the failed search area on an otherwise empty viewport.
+        image = Image.new('RGB', (1200, 800), (107, 81, 82))
+        obs, _ = self.vision.observe(image)
+        self.assertEqual(obs.scene, 'unknown')
+        with Image.open(FIXTURES / 'shortcut-cooldown-region.pgm') as region:
+            image.paste(region, (495, 220))
+        obs, _ = self.vision.observe(image)
+        self.assertEqual(obs.scene, 'navigation')
+        self.assertEqual(obs.targets['shortcut'], (521, 244))
+
     def test_ready_level_hp_and_timer(self):
         obs, _ = self.vision.observe(Image.open(FIXTURES / 'ready.png'))
         self.assertEqual(obs.seconds, 0)
@@ -40,4 +51,3 @@ class ScreenRecognition(unittest.TestCase):
     def test_unknown_viewport_is_rejected(self):
         with self.assertRaises(ValueError):
             normalize(Image.new('RGB', (1200, 800), '#202020'))
-

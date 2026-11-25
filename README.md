@@ -4,7 +4,7 @@ A Windows desktop companion that repeats Obelisk fights in Idle Obelisk Miner th
 
 ## Install and start
 
-You need Windows, Google Play Games with Idle Obelisk Miner installed, and 64-bit Python 3.13 with Tkinter. Add Python to PATH during installation. Download the source ZIP from the GitHub release and extract it, or clone the repository. Open PowerShell in the folder that contains `app.py` and check that `python --version` reports Python 3.13 before running the following commands.
+You need Windows, Google Play Games with Idle Obelisk Miner installed, and 64-bit Python 3.13 with Tkinter. Add Python to PATH during installation. [Download the current Windows source ZIP](https://github.com/Soer907c/obelisk-companion/archive/refs/heads/main.zip) and extract it, or clone the repository. Open PowerShell in the folder that contains `app.py` and check that `python --version` reports Python 3.13 before running the following commands.
 
 ```powershell
 python -m venv .venv
@@ -12,7 +12,7 @@ python -m venv .venv
 .\.venv\Scripts\python.exe app.py
 ```
 
-The first installation needs internet access for Python packages. After setup you can also double-click **Start Obelisk.cmd**. If the window fails to open, run the last PowerShell command to see the error.
+The first installation needs internet access for Python packages. After setup you can also double-click **Start Obelisk.cmd**. To create a launcher with the companion’s green obelisk icon, run `& '.\Start Obelisk.cmd' --shortcut` in PowerShell from the app folder. Double-click **Start Obelisk.lnk** to launch. If you move the app folder, recreate the shortcut there. If the app fails to open, run the last setup command to see the error.
 
 1. Open Idle Obelisk Miner and leave the game visible. The recognition profile was calibrated against the v2.2.52 desktop landscape layout with a 3:2 game viewport at two window sizes.
 2. In the companion, choose **Check screen recognition**. It reads the screen without clicking.
@@ -24,7 +24,7 @@ Start with a supervised one-fight session on a new setup. Game updates, modal di
 
 ### Update
 
-Close the companion. For a ZIP installation, extract the newer release into a new folder and repeat the installation commands there. For a clone on the default branch with a clean worktree, run `git pull --ff-only` and rerun the dependency installation command. Your settings are stored in `%LOCALAPPDATA%\ObeliskCompanion`, outside the source folder.
+Close the companion. For a ZIP installation, extract the current source ZIP into a new folder and repeat the installation commands there. For a clone on the default branch with a clean worktree, run `git pull --ff-only` and rerun the dependency installation command. Your settings are stored in `%LOCALAPPDATA%\ObeliskCompanion`, outside the source folder.
 
 ## How it works
 
@@ -49,7 +49,7 @@ Run the offline checks from the project folder after installing the dependencies
 .\.venv\Scripts\python.exe tools/check_vision.py
 ```
 
-The v0.1.0 release candidate passed all 17 offline tests on Windows with Python 3.13. They cover number parsing and estimates, fight transitions with fake input, and recognition of navigation, menu, fight and return screens. The recognition fixtures keep the screen regions the detector reads. The tests use recorded data and fake input so they can run without a game session.
+The offline suite covers the post-fight cooldown shortcut and simulates two consecutive fights. Other tests cover number parsing, estimates and recognition of the menu, fight and return screens. The recognition fixtures keep the screen regions the detector reads. The tests use recorded data and fake input so they can run without a game session.
 
 Previous supervised testing covered three live attempts, including two consecutive fights with cooldown and return navigation, stopping at the configured fight limit, and stopping on F8 and focus loss. A real victory and a continuous multi-hour session remain unverified. Some low-contrast fight-timer frames remain unreadable and are skipped.
 
@@ -57,4 +57,4 @@ Previous supervised testing covered three live attempts, including two consecuti
 
 OCR runs locally with bundled models from its Python package. Settings, session logs and diagnostic captures are written to `%LOCALAPPDATA%\ObeliskCompanion`. Review those files before sharing them because diagnostic captures can include game activity and session logs contain readings and timestamps.
 
-`assets/obelisk/` contains six game UI crops required for recognition. `tests/fixtures/` contains minimized game-derived images used by the offline tests. Obelisk Companion is an independent project for Idle Obelisk Miner.
+`assets/obelisk/` contains small game UI crops required for recognition. `tests/fixtures/` contains minimized game-derived images used by the offline tests. Obelisk Companion is an independent project for Idle Obelisk Miner.

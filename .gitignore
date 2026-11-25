@@ -1,4 +1,7 @@
 .deps/
+/AGENTS.md
+/PLAN.md
+/Start Obelisk.lnk
 .venv/
 __pycache__/
 *.pyc
@@ -29,4 +32,3 @@ logs/
 !/tests/fixtures/live-return.png
 !/tests/fixtures/ready.png
 !/tests/fixtures/return.png
-

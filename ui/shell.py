@@ -1,5 +1,6 @@
 import tkinter as tk
 import customtkinter as ctk
+from bootstrap import ROOT
 from features import FEATURES
 from .theme import BG, PANEL, ACCENT, MUTED, label
 
@@ -7,6 +8,7 @@ class Companion(ctk.CTk):
     def __init__(self):
         super().__init__()
         self.title('Obelisk Companion')
+        self.iconbitmap(str(ROOT / 'assets' / 'obelisk-companion.ico'))
         self.geometry('1240x880')
         self.minsize(1080, 780)
         self.configure(fg_color=BG)

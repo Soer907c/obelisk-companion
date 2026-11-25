@@ -32,6 +32,7 @@ class Vision:
         self.templates = {}
         for name in ('shortcut', 'fight', 'exit', 'attack', 'return', 'menu'):
             self.templates[name] = np.asarray(Image.open(TEMPLATES / (name + '.png')).convert('L'))
+        self.templates['shortcut-cooldown'] = np.asarray(Image.open(TEMPLATES / 'shortcut-cooldown.pgm'))
 
     def match(self, gray, name, region):
         x1, y1, x2, y2 = region
@@ -72,6 +73,10 @@ class Vision:
                    'attack': (790, 525, 950, 580), 'return': (790, 525, 950, 580)}
         obs.targets = {name: point for name, region in regions.items()
                        if (point := self.match(gray, name, region)) is not None}
+        if 'shortcut' not in obs.targets:
+            shortcut = self.match(gray, 'shortcut-cooldown', regions['shortcut'])
+            if shortcut is not None:
+                obs.targets['shortcut'] = shortcut
         if 'menu' in obs.targets and 'return' in obs.targets:
             obs.scene = 'return'
         elif 'menu' in obs.targets and 'attack' in obs.targets:
@@ -104,4 +109,3 @@ class Vision:
         elif 'shortcut' in obs.targets:
             obs.scene = 'navigation'
         return obs, Image.fromarray(frame)
-
