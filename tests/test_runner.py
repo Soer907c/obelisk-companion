@@ -1,4 +1,5 @@
 import itertools
+import json
 import queue
 import tempfile
 import threading
@@ -17,17 +18,22 @@ class FakeDesktop:
         self.abort = threading.Event()
         self.held = False
         self.actions = []
+        self.frame = 0
+        self.click_frames = []
 
     def find(self): return 'Test game'
     def focus(self): pass
     def foreground(self): return True
-    def capture(self): return Image.new('RGB', (8, 8))
+    def capture(self):
+        self.frame += 1
+        return Image.new('RGB', (8, 8))
     def release(self): self.held = False
     def hold(self, target, viewport):
         self.held = True
         self.actions.append('hold')
     def click(self, target, viewport):
         self.actions.append(target)
+        self.click_frames.append((self.frame, target))
 
 class FakeVision:
     def __init__(self, observations):
@@ -59,8 +65,8 @@ class FightWorkflow(unittest.TestCase):
         runner.vision = FakeVision(observations)
         runner.cancel.wait = lambda seconds: runner.cancel.is_set()
         clock = itertools.count(0, 1)
-        with tempfile.TemporaryDirectory() as temporary, \
-             patch('obelisk.runner.RUNTIME', Path(temporary)), \
+        temporary = self.enterContext(tempfile.TemporaryDirectory())
+        with patch('obelisk.runner.RUNTIME', Path(temporary)), \
              patch('obelisk.runner.keep_awake'), \
              patch.object(runner, '_watchdog', lambda: None), \
              patch('obelisk.runner.time.monotonic', lambda: next(clock)):
@@ -97,6 +103,24 @@ class FightWorkflow(unittest.TestCase):
         self.assertEqual(runner.stats.attempts, 2)
         self.assertEqual(runner.desktop.actions.count('attack'), 2)
 
+    def test_second_fight_waits_for_two_fresh_zeros_after_countdown_read_gaps(self):
+        ready = screen('menu', seconds=0, level=70)
+        fight = [screen('fight', seconds=2, total=Decimal(1)),
+                 screen('fight', seconds=0, total=Decimal(10)),
+                 screen('fight', seconds=0, total=Decimal(10))]
+        first_cycle = [ready, ready, *fight, screen('return'), screen('navigation')]
+        waiting = [screen('menu', seconds=n, level=70) for n in (35, 33, 31, 29, 27, 25, 23, 21, None, 3)]
+        confirmation = [ready, screen('menu', level=70), ready, screen('unknown'), ready, ready]
+        second_ready = len(first_cycle + waiting + confirmation)
+        runner = self.run_scenario(
+            first_cycle + waiting + confirmation + fight + [screen('return'), screen('navigation'), ready],
+            Settings(max_attempts=2),
+        )
+        self.assertEqual(runner.stop_reason, 'Fight limit reached')
+        self.assertEqual(runner.stats.attempts, 2)
+        self.assertEqual([frame for frame, target in runner.desktop.click_frames if target == 'attack'],
+                         [2, second_ready])
+
     def test_unknown_screen_never_clicks(self):
         runner = self.run_scenario([screen('unknown')], Settings())
         self.assertEqual(runner.desktop.actions, [])
@@ -109,9 +133,15 @@ class FightWorkflow(unittest.TestCase):
         self.assertIn('menu was not confirmed', runner.stop_reason)
 
     def test_missing_cooldown_never_starts(self):
-        runner = self.run_scenario([screen('menu', level=70)], Settings())
+        runner = self.run_scenario([screen('menu', level=70, raw={'cooldown': '0:5?'})], Settings())
         self.assertEqual(runner.desktop.actions, [])
-        self.assertIn('Cooldown', runner.stop_reason)
+        self.assertEqual(runner.stop_reason, 'Cooldown could not be read reliably.')
+        self.assertTrue(runner.logfile.with_name('latest-error.png').is_file())
+        records = [json.loads(line) for line in runner.logfile.read_text(encoding='utf-8').splitlines()]
+        failure = next(record for record in records if record['message'] == 'Cooldown unreadable')
+        self.assertEqual(failure['raw'], '0:5?')
+        self.assertEqual(failure['capture_size'], [8, 8])
+        self.assertGreater(failure['unreadable_seconds'], Settings().unknown_seconds)
 
     def test_damage_stall_releases_and_stops(self):
         runner = self.run_scenario([screen('fight', seconds=30, total=Decimal(0))], Settings())

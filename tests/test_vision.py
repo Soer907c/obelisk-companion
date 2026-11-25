@@ -1,9 +1,10 @@
 import unittest
 from decimal import Decimal
 from pathlib import Path
+from unittest.mock import patch
 import bootstrap
 from PIL import Image
-from obelisk.vision import Vision, load_shortcut_icons, normalize
+from obelisk.vision import Vision, load_shortcut_icons, menu_cooldown_seconds, normalize
 
 FIXTURES = Path(__file__).parent / 'fixtures'
 
@@ -73,6 +74,38 @@ class ScreenRecognition(unittest.TestCase):
         self.assertEqual(obs.seconds, 0)
         self.assertEqual(obs.level, 70)
         self.assertEqual(obs.hp, Decimal('33.5e45'))
+
+    def test_small_menu_keeps_attack_and_return_distinct(self):
+        for name, scene, seconds in (
+            ('live-menu', 'menu', 35), ('live-return', 'return', None),
+            ('hub', None, None), ('live-fight', None, None),
+        ):
+            with Image.open(FIXTURES / (name + '.png')) as original:
+                for scale in (.5, .6):
+                    with self.subTest(name=name, scale=scale):
+                        resized = original.resize((round(original.width*scale), round(original.height*scale)),
+                                                  Image.Resampling.LANCZOS)
+                        obs, _ = self.vision.observe(resized)
+                        if scene is None:
+                            self.assertNotIn(obs.scene, ('menu', 'return'))
+                        else:
+                            self.assertEqual((obs.scene, obs.seconds), (scene, seconds))
+
+    def test_ambiguous_menu_zero_can_only_extend_waiting(self):
+        for text, seconds in (('Q:14', 14), ('Q:00', None), ('Q:99', None),
+                              ('Q:1?', None), ('0:00', 0), ('', None)):
+            with self.subTest(text=text):
+                self.assertEqual(menu_cooldown_seconds(text), seconds)
+
+    def test_alternate_cooldown_crop_cannot_establish_ready(self):
+        with Image.open(FIXTURES / 'ready.png') as image, patch.object(
+            self.vision, 'read_lines',
+            side_effect=[{'hp': '', 'level': ''}, {'cooldown': ''}, {'cooldown': '0:00'}],
+        ) as read:
+            obs, _ = self.vision.observe(image)
+        self.assertEqual(obs.scene, 'menu')
+        self.assertEqual(read.call_count, 3)
+        self.assertIsNone(obs.seconds)
 
     def test_actual_capture_damage_and_timer(self):
         obs, _ = self.vision.observe(Image.open(FIXTURES / 'live-fight.png'))

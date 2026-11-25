@@ -13,6 +13,9 @@ TEMPLATES = Path(__file__).resolve().parents[1] / 'assets' / 'obelisk'
 SHORTCUT_REGION = (495, 220, 545, 270)
 SHORTCUT_SIZES = ((26, 32), (26, 34), (27, 33), (28, 32), (28, 34))
 SHORTCUT_SCORE = .70
+MENU_COOLDOWN_REGION = (859, 561, 899, 579)
+MENU_COOLDOWN_DIGITS = (864, 562, 894, 578)
+MENU_TITLE_REGION = (760, 145, 910, 180)
 
 
 def load_shortcut_icons():
@@ -40,6 +43,13 @@ def has_shortcut_button(search, x, y):
     return True
 
 
+def menu_cooldown_seconds(text):
+    # Small menu digits sometimes render as Q. Use that only to keep waiting.
+    if text.startswith('Q:'):
+        return timer('0' + text[1:]) or None
+    return timer(text)
+
+
 def normalize(image):
     pixels = np.asarray(image.convert('RGB'))
     mask = np.max(np.abs(pixels.astype(np.int16) - [107, 81, 82]), axis=2) <= 15
@@ -63,6 +73,7 @@ class Vision:
         self.templates = {}
         for name in ('shortcut', 'fight', 'exit', 'attack', 'return', 'menu'):
             self.templates[name] = np.asarray(Image.open(TEMPLATES / (name + '.png')).convert('L'))
+        self.templates['menu-soft'] = cv2.GaussianBlur(self.templates['menu'], (3, 3), .65)
         self.templates['shortcut-cooldown'] = np.asarray(Image.open(TEMPLATES / 'shortcut-cooldown.pgm'))
         self.shortcut_icons = []
         for motif, icon in enumerate(load_shortcut_icons(), 1):
@@ -104,7 +115,7 @@ class Vision:
         return (x1 + pos[0] + template.shape[1]//2,
                 y1 + pos[1] + template.shape[0]//2)
 
-    def read_lines(self, frame, boxes, source=None, viewport=None):
+    def read_lines(self, frame, boxes, source=None, viewport=None, *, interpolation=cv2.INTER_NEAREST):
         crops = []
         for x1, y1, x2, y2 in boxes.values():
             if source is not None:
@@ -113,8 +124,7 @@ class Vision:
                                              round(l+x2*(r-l)/1200), round(t+y2*(b-t)/800))).convert('RGB'))
             else:
                 crop = frame[y1:y2, x1:x2]
-            # White text on dark panels; nearest-neighbour scaling preserves pixel glyphs.
-            rgb = cv2.resize(crop, None, fx=2, fy=2, interpolation=cv2.INTER_NEAREST)
+            rgb = cv2.resize(crop, None, fx=2, fy=2, interpolation=interpolation)
             crops.append(cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR))
         # Small timers lose glyph detail if padded to a long HP line in one batch.
         results = [self.ocr.text_recognizer([crop])[0][0] for crop in crops]
@@ -126,10 +136,15 @@ class Vision:
         gray = cv2.cvtColor(frame, cv2.COLOR_RGB2GRAY)
         obs = Observation(viewport=rect)
         regions = {'exit': SHORTCUT_REGION,
-                   'fight': (285, 122, 375, 151), 'menu': (760, 145, 910, 180),
+                   'fight': (285, 122, 375, 151), 'menu': MENU_TITLE_REGION,
                    'attack': (790, 525, 950, 580), 'return': (790, 525, 950, 580)}
         obs.targets = {name: point for name, region in regions.items()
                        if (point := self.match(gray, name, region)) is not None}
+        if 'menu' not in obs.targets and ('attack' in obs.targets or 'return' in obs.targets):
+            # Small viewports soften title edges. Still require a separate button match.
+            title = self.match(gray, 'menu-soft', MENU_TITLE_REGION)
+            if title is not None:
+                obs.targets['menu'] = title
         if 'exit' not in obs.targets:
             icon = self.match_shortcut(frame)
             if icon is not None:
@@ -149,11 +164,19 @@ class Vision:
         elif 'menu' in obs.targets and 'attack' in obs.targets:
             obs.scene = 'menu'
             obs.raw = self.read_lines(frame, {
-                'cooldown': (859, 561, 899, 579),
                 'hp': (810, 215, 974, 234),
                 'level': (810, 184, 896, 201),
             })
-            obs.seconds = timer(obs.raw['cooldown'])
+            # A second resampling of the tiny digits can turn a 0 into a Q.
+            obs.raw.update(self.read_lines(frame, {'cooldown': MENU_COOLDOWN_REGION}, image, rect))
+            obs.seconds = menu_cooldown_seconds(obs.raw['cooldown'])
+            if obs.seconds is None:
+                # Refocus OCR on the digits at small sizes. Alternate readings
+                # can extend the wait, but cannot establish a ready state.
+                retry = self.read_lines(frame, {'cooldown': MENU_COOLDOWN_DIGITS},
+                                        image, rect, interpolation=cv2.INTER_CUBIC)['cooldown']
+                if seconds := menu_cooldown_seconds(retry):
+                    obs.raw['cooldown'], obs.seconds = retry, seconds
             hp_text = re.sub(r'^\s*[Hh][Pp]\s*[:.]?\s*', '', obs.raw['hp'])
             obs.hp = number(hp_text.split('/')[0])
             level = re.search(r'Obelisk\s*[:.]?\s*(\d+)', obs.raw['level'], re.I)

@@ -4,7 +4,7 @@ import threading
 import time
 from datetime import datetime
 from .model import Statistics, FightTracker, compact
-from .vision import Vision
+from .vision import MENU_COOLDOWN_REGION, Vision
 from core.windows import Desktop, keep_awake, wait_for_game_focus
 from core.storage import RUNTIME
 
@@ -87,6 +87,7 @@ class Runner:
             scene_started = started
             last_log = 0
             ready_frames = 0
+            cooldown_unknown_since = None
             menu_requested = None
             while not self.cancel.is_set():
                 now = time.monotonic()
@@ -148,6 +149,10 @@ class Runner:
                     self.events.put(('status', ('OBSERVING', 'Reading the game. No clicks are being sent.')))
                     self.cancel.wait(.7)
                     continue
+                if obs.scene != 'menu':
+                    ready_frames = 0
+                    if obs.scene != 'unknown':
+                        cooldown_unknown_since = None
                 if menu_requested is not None:
                     if obs.scene == 'menu':
                         menu_requested = None
@@ -225,7 +230,15 @@ class Runner:
                             break
                         ready_frames = ready_frames + 1 if obs.seconds == 0 else 0
                         self.events.put(('status', ('WAITING', 'Reading the cooldown before the next fight.')))
-                        if obs.seconds is None and now-scene_started > settings.unknown_seconds:
+                        if obs.seconds is not None:
+                            cooldown_unknown_since = None
+                        elif cooldown_unknown_since is None:
+                            cooldown_unknown_since = now
+                        elif now-cooldown_unknown_since > settings.unknown_seconds:
+                            self.log('Cooldown unreadable', raw=obs.raw.get('cooldown'),
+                                     unreadable_seconds=now-cooldown_unknown_since,
+                                     capture_size=image.size, viewport=obs.viewport,
+                                     normalized_region=MENU_COOLDOWN_REGION)
                             raise RuntimeError('Cooldown could not be read reliably.')
                         if ready_frames >= 2 and now-last_action > 1.2:
                             if baseline_level is None:
