@@ -5,7 +5,7 @@ import time
 from datetime import datetime
 from .model import Statistics, FightTracker, compact
 from .vision import Vision
-from core.windows import Desktop, StopHotkey, keep_awake
+from core.windows import Desktop, keep_awake, wait_for_game_focus
 from core.storage import RUNTIME
 
 class Runner:
@@ -39,44 +39,36 @@ class Runner:
         self.desktop.abort.set()
         self.desktop.release()
 
-    def start(self, settings):
+    def start(self, settings, *, game_title=None):
         if self.running:
             return
         self.cancel.clear()
         self.desktop.abort.clear()
         self.stats = Statistics()
-        self.thread = threading.Thread(target=self._run, args=(settings,), daemon=True)
+        self.thread = threading.Thread(target=self._run, args=(settings, game_title), daemon=True)
         self.thread.start()
 
     def _watchdog(self):
-        hotkey = StopHotkey()
-        try:
-            while not self.cancel.wait(.03):
-                if hotkey.pressed():
-                    self.stop('Stopped with F8')
-                    return
-                if self.desktop.held and (not self.desktop.foreground() or time.monotonic()-self.heartbeat > 6):
-                    self.stop('Mouse released: lost focus or screen capture stalled')
-                    return
-        finally:
-            hotkey.close()
+        while not self.cancel.wait(.03):
+            if self.desktop.held and (not self.desktop.foreground() or time.monotonic()-self.heartbeat > 6):
+                self.stop('Mouse released: lost focus or screen capture stalled')
+                return
 
-    def _run(self, settings):
+    def _run(self, settings, game_title=None):
         image = None
         tracker = None
         try:
             RUNTIME.mkdir(parents=True, exist_ok=True)
             self.logfile = RUNTIME / ('session-' + datetime.now().strftime('%Y%m%d-%H%M%S') + '.jsonl')
             self.events.put(('status', ('PREPARING', 'Loading local screen recognition…')))
+            if game_title is None and not self.cancel.is_set():
+                game_title = self.desktop.find()
+                self.desktop.focus()
+            if not wait_for_game_focus(self.desktop, self.cancel.is_set):
+                return
+            self.log('Connected to the game', title=game_title)
             if self.vision is None:
                 self.vision = Vision()
-            title = self.desktop.find()
-            self.log('Connected to the game', title=title)
-            if self.cancel.is_set():
-                return
-            self.desktop.focus()
-            if self.cancel.wait(.5):
-                return
             self.watchdog = threading.Thread(target=self._watchdog, daemon=True)
             self.watchdog.start()
             keep_awake(True)

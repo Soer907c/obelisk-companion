@@ -51,3 +51,4 @@ class ScreenRecognition(unittest.TestCase):
     def test_unknown_viewport_is_rejected(self):
         with self.assertRaises(ValueError):
             normalize(Image.new('RGB', (1200, 800), '#202020'))
+

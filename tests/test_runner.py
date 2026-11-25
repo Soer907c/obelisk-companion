@@ -19,6 +19,7 @@ class FakeDesktop:
 
     def find(self): return 'Test game'
     def focus(self): pass
+    def foreground(self): return True
     def capture(self): return Image.new('RGB', (8, 8))
     def release(self): self.held = False
     def hold(self, target, viewport):
@@ -103,3 +104,4 @@ class FightWorkflow(unittest.TestCase):
                                     screen('menu', seconds=0, level=71)], Settings())
         self.assertEqual(runner.desktop.actions, [])
         self.assertIn('Obelisk defeated', runner.stop_reason)
+

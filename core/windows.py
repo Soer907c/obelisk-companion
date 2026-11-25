@@ -16,18 +16,73 @@ user32.GetAsyncKeyState.restype = ctypes.c_short
 user32.RegisterHotKey.argtypes = [W.HWND, ctypes.c_int, W.UINT, W.UINT]
 user32.UnregisterHotKey.argtypes = [W.HWND, ctypes.c_int]
 
+
+class MonitorInfo(ctypes.Structure):
+    _fields_ = [('size', W.DWORD), ('monitor', W.RECT), ('work', W.RECT), ('flags', W.DWORD)]
+
+
+def centered_bounds(work, width, height):
+    left, top, right, bottom = work
+    width, height = min(width, right - left), min(height, bottom - top)
+    return left + (right - left - width) // 2, top + (bottom - top - height) // 2, width, height
+
+
+def center_window(hwnd, client_size, design_size):
+    """Place the outer window in the pointer monitor's physical work area."""
+    cursor = W.POINT()
+    user32.MonitorFromPoint.argtypes = [W.POINT, W.DWORD]
+    user32.MonitorFromPoint.restype = W.HANDLE
+    user32.GetMonitorInfoW.argtypes = [W.HANDLE, ctypes.POINTER(MonitorInfo)]
+    user32.GetWindowRect.argtypes = [W.HWND, ctypes.POINTER(W.RECT)]
+    user32.SetWindowPos.argtypes = [W.HWND, W.HWND, ctypes.c_int, ctypes.c_int,
+                                   ctypes.c_int, ctypes.c_int, W.UINT]
+    info = MonitorInfo(size=ctypes.sizeof(MonitorInfo))
+    outer = W.RECT()
+    if (not user32.GetCursorPos(ctypes.byref(cursor))
+            or not user32.GetMonitorInfoW(user32.MonitorFromPoint(cursor, 2), ctypes.byref(info))
+            or not user32.GetWindowRect(hwnd, ctypes.byref(outer))):
+        return None
+    # Establish the destination DPI before measuring the frame for final placement.
+    user32.SetWindowPos(hwnd, None, info.work.left, info.work.top, 0, 0, 0x0015)
+    client = W.RECT()
+    user32.GetClientRect.argtypes = [W.HWND, ctypes.POINTER(W.RECT)]
+    user32.GetWindowRect(hwnd, ctypes.byref(outer))
+    user32.GetClientRect(hwnd, ctypes.byref(client))
+    frame_width = outer.right - outer.left - client.right
+    frame_height = outer.bottom - outer.top - client.bottom
+    get_dpi = getattr(user32, 'GetDpiForWindow', None)
+    if get_dpi:
+        get_dpi.argtypes = [W.HWND]
+    dpi = get_dpi(hwnd) if get_dpi else 0
+    scale = dpi / 96 if dpi else client_size[0] / design_size[0]
+    work = info.work
+    placement = centered_bounds((work.left, work.top, work.right, work.bottom),
+                                round(design_size[0] * scale) + frame_width,
+                                round(design_size[1] * scale) + frame_height)
+    if user32.SetWindowPos(hwnd, None, *placement, 0x0014):
+        return int((placement[2] - frame_width) / scale), int((placement[3] - frame_height) / scale)
+    return None
+
 class StopHotkey:
-    """Own the hotkey on the watchdog thread, so short taps are queued."""
+    """Register F8 on the listener thread with Windows key-repeat suppression."""
     def __init__(self):
         self.registered = bool(user32.RegisterHotKey(None, 0xB17, 0x4000, 0x77))
-        user32.GetAsyncKeyState(0x77)  # Discard a stale press from a prior session.
+        self.was_down = False
+        if not self.registered:
+            self.was_down = bool(user32.GetAsyncKeyState(0x77) & 0x8000)
 
     def pressed(self):
+        if not self.registered:
+            state = user32.GetAsyncKeyState(0x77)
+            down = bool(state & 0x8000)
+            pressed = not self.was_down and bool(state & 0x8001)
+            self.was_down = down
+            return pressed
         message = W.MSG()
         while user32.PeekMessageW(ctypes.byref(message), None, 0x0312, 0x0312, 1):
             if message.wParam == 0xB17:
                 return True
-        return bool(user32.GetAsyncKeyState(0x77) & 0x8001)
+        return False
 
     def close(self):
         if self.registered:
@@ -95,7 +150,9 @@ class Desktop:
     def focus(self):
         if not self.hwnd:
             self.find()
-        user32.SetForegroundWindow(self.hwnd)
+        if user32.IsIconic(self.hwnd):
+            user32.ShowWindow(self.hwnd, 9)
+        return bool(user32.SetForegroundWindow(self.hwnd))
 
     def foreground(self):
         return self.hwnd is not None and user32.GetForegroundWindow() == self.hwnd
@@ -158,8 +215,31 @@ class Desktop:
         finally:
             self.release()
 
+    def click_current(self):
+        with self.lock:
+            if self.abort.is_set() or not self.foreground() or self.bounds() != self.rect:
+                raise RuntimeError('The game window changed or the session was stopped.')
+            self._event(0x0002)
+            self.held = True
+        try:
+            time.sleep(.07)
+        finally:
+            self.release()
+
     @staticmethod
     def stop_pressed():
         # Include a press since the last poll, including very short key taps.
         return bool(user32.GetAsyncKeyState(0x77) & 0x8001)  # F8
+
+
+def wait_for_game_focus(desktop, stopped, timeout=2):
+    deadline = time.monotonic() + timeout
+    while not stopped():
+        if desktop.foreground():
+            return True
+        if time.monotonic() >= deadline:
+            raise RuntimeError('Windows did not bring the selected game window to the foreground.')
+        time.sleep(.05)
+    return False
+
 

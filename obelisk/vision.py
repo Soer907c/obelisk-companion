@@ -109,3 +109,4 @@ class Vision:
         elif 'shortcut' in obs.targets:
             obs.scene = 'navigation'
         return obs, Image.fromarray(frame)
+

@@ -18,5 +18,6 @@ class Feature:
 
 FEATURES = (
     Feature('obelisk', 'Obelisk fights', 'ui.fight_panel', 'FightPanel'),
+    Feature('relics', 'Relic rerolls', 'ui.relic_panel', 'RelicPanel'),
 )
 
